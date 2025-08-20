@@ -1,58 +1,143 @@
 'use client';
-import React, {useMemo, useState} from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 
-const DATA=[
-  {id:'ORD-001234',client:'Kusto Logistics',warehouse:'ALA-DC1',items:18,status:'Packed',createdAt:'2025-08-05T09:20:00Z',eta:'2025-08-21T15:00:00Z'},
-  {id:'ORD-001235',client:'Altai Foods',warehouse:'ALA-DC1',items:6,status:'Shipped',createdAt:'2025-08-10T10:10:00Z',eta:'2025-08-20T12:00:00Z'},
-  {id:'ORD-001236',client:'Nomad Wear',warehouse:'ALA-DC2',items:42,status:'Delivered',createdAt:'2025-08-12T13:00:00Z',eta:'2025-08-19T18:00:00Z'},
-  {id:'ORD-001237',client:'Eurasia Pharma',warehouse:'ALA-DC1',items:9,status:'Received',createdAt:'2025-08-16T08:30:00Z',eta:'2025-08-23T10:00:00Z'},
+/** ===== Seed data (используется при первом запуске) ===== */
+const SEED = [
+  {
+    id: 'ORD-001234',
+    client: 'Kusto Logistics',
+    createdAt: '2025-08-05T09:20:00Z',
+    eta: '2025-08-21T15:00:00Z',
+    items: 18,
+    status: 'Packed',
+    warehouse: 'ALA-DC1',
+    milestones: [
+      { key: 'Received', ts: '2025-08-05T09:21:00Z' },
+      { key: 'Picked', ts: '2025-08-06T14:00:00Z' },
+      { key: 'Packed', ts: '2025-08-06T18:30:00Z' },
+      { key: 'Shipped', ts: null },
+      { key: 'Delivered', ts: null },
+    ],
+    files: [{ name: 'invoice_001234.pdf', size: '124 KB' }],
+  },
+  {
+    id: 'ORD-001235',
+    client: 'Altai Foods',
+    createdAt: '2025-08-10T10:10:00Z',
+    eta: '2025-08-20T12:00:00Z',
+    items: 6,
+    status: 'Shipped',
+    warehouse: 'ALA-DC1',
+    milestones: [
+      { key: 'Received', ts: '2025-08-10T10:15:00Z' },
+      { key: 'Picked', ts: '2025-08-11T08:40:00Z' },
+      { key: 'Packed', ts: '2025-08-11T11:05:00Z' },
+      { key: 'Shipped', ts: '2025-08-12T16:45:00Z' },
+      { key: 'Delivered', ts: null },
+    ],
+    files: [],
+  },
+  {
+    id: 'ORD-001236',
+    client: 'Nomad Wear',
+    createdAt: '2025-08-12T13:00:00Z',
+    eta: '2025-08-19T18:00:00Z',
+    items: 42,
+    status: 'Delivered',
+    warehouse: 'ALA-DC2',
+    milestones: [
+      { key: 'Received', ts: '2025-08-12T13:10:00Z' },
+      { key: 'Picked', ts: '2025-08-13T07:40:00Z' },
+      { key: 'Packed', ts: '2025-08-13T12:20:00Z' },
+      { key: 'Shipped', ts: '2025-08-14T09:15:00Z' },
+      { key: 'Delivered', ts: '2025-08-17T17:35:00Z' },
+    ],
+    files: [{ name: 'packing_list_001236.pdf', size: '98 KB' }],
+  },
+  {
+    id: 'ORD-001237',
+    client: 'Eurasia Pharma',
+    createdAt: '2025-08-16T08:30:00Z',
+    eta: '2025-08-23T10:00:00Z',
+    items: 9,
+    status: 'Received',
+    warehouse: 'ALA-DC1',
+    milestones: [
+      { key: 'Received', ts: '2025-08-16T08:35:00Z' },
+      { key: 'Picked', ts: null },
+      { key: 'Packed', ts: null },
+      { key: 'Shipped', ts: null },
+      { key: 'Delivered', ts: null },
+    ],
+    files: [],
+  },
 ];
-const fmt = d => new Date(d).toLocaleString();
 
-export default function Page(){
-  const [q,setQ]=useState(''), [st,setSt]=useState('all'), [wh,setWh]=useState('all'), [sort,setSort]=useState('created_desc');
-  const warehouses=[...new Set(DATA.map(x=>x.warehouse))], statuses=[...new Set(DATA.map(x=>x.status))];
-  const list=useMemo(()=> {
-    let r=DATA.filter(o=>(o.id+o.client+o.status+o.warehouse).toLowerCase().includes(q.toLowerCase())
-      &&(st==='all'||o.status===st)&&(wh==='all'||o.warehouse===wh));
-    r.sort((a,b)=>sort==='eta_asc'? new Date(a.eta)-new Date(b.eta) : new Date(b.createdAt)-new Date(a.createdAt));
-    return r;
-  },[q,st,wh,sort]);
+const STATUS_OPTIONS = ['Received', 'Picked', 'Packed', 'Shipped', 'Delivered'];
 
+const DEFAULT_COLUMNS = {
+  id: true,
+  client: true,
+  warehouse: true,
+  createdAt: true,
+  eta: true,
+  items: true,
+  status: true,
+  progress: true,
+};
+
+const fmt = (d) => new Date(d).toLocaleString();
+
+/** Simple progress component */
+function Progress({ milestones }) {
+  const total = milestones.length;
+  const done = milestones.filter((m) => !!m.ts).length;
+  const pct = Math.round((done / total) * 100);
   return (
-    <div style={{padding:24,fontFamily:'system-ui,Segoe UI,Arial'}}>
-      <h1 style={{fontSize:22,fontWeight:700,marginBottom:12}}>Client Portal Lite</h1>
-      <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:12}}>
-        <input placeholder="Поиск" value={q} onChange={e=>setQ(e.target.value)} style={{padding:'8px 10px',border:'1px solid #ccc',borderRadius:8,minWidth:260}}/>
-        <select value={st} onChange={e=>setSt(e.target.value)} style={{padding:8,border:'1px solid #ccc',borderRadius:8}}>
-          <option value="all">Все статусы</option>{statuses.map(s=><option key={s} value={s}>{s}</option>)}
-        </select>
-        <select value={wh} onChange={e=>setWh(e.target.value)} style={{padding:8,border:'1px solid #ccc',borderRadius:8}}>
-          <option value="all">Все склады</option>{warehouses.map(w=><option key={w} value={w}>{w}</option>)}
-        </select>
-        <select value={sort} onChange={e=>setSort(e.target.value)} style={{padding:8,border:'1px solid #ccc',borderRadius:8}}>
-          <option value="created_desc">Создан ↓</option><option value="eta_asc">ETA ↑</option>
-        </select>
-      </div>
-      <table style={{width:'100%',fontSize:14,borderCollapse:'collapse'}}>
-        <thead style={{background:'#f9fafb',color:'#6b7280',textAlign:'left'}}>
-          <tr><th style={{padding:10}}>Номер</th><th style={{padding:10}}>Клиент</th><th style={{padding:10}}>Склад</th>
-              <th style={{padding:10}}>Создан</th><th style={{padding:10}}>ETA</th><th style={{padding:10}}>Позиции</th><th style={{padding:10}}>Статус</th></tr>
-        </thead>
-        <tbody>
-          {list.map(o=>(
-            <tr key={o.id} style={{borderTop:'1px solid #f3f4f6'}}>
-              <td style={{padding:10,fontWeight:600}}>{o.id}</td>
-              <td style={{padding:10}}>{o.client}</td>
-              <td style={{padding:10}}>{o.warehouse}</td>
-              <td style={{padding:10,color:'#6b7280'}}>{fmt(o.createdAt)}</td>
-              <td style={{padding:10,color:'#6b7280'}}>{fmt(o.eta)}</td>
-              <td style={{padding:10}}>{o.items}</td>
-              <td style={{padding:10}}><span style={{border:'1px solid #d1d5db',borderRadius:999,padding:'2px 8px'}}>{o.status}</span></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="h-2 w-full rounded-full bg-gray-200">
+      <div className="h-2 rounded-full bg-black" style={{ width: `${pct}%` }} />
     </div>
   );
 }
+
+/** Dumb modal (без зависимостей) */
+function Modal({ open, onClose, children }) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={onClose}>
+      <div className="max-w-3xl w-full rounded-2xl bg-white p-4" onClick={(e) => e.stopPropagation()}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+export default function Page() {
+  /** ===== STATE ===== */
+  const [orders, setOrders] = useState([]);
+  const [query, setQuery] = useState('');
+  const [statuses, setStatuses] = useState([]);
+  const [warehouse, setWarehouse] = useState('all');
+  const [sortBy, setSortBy] = useState('createdAt_desc');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [columns, setColumns] = useState(DEFAULT_COLUMNS);
+  const [role, setRole] = useState('viewer'); // 'viewer' | 'admin'
+  const [selected, setSelected] = useState(null);
+  const [open, setOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState('info');
+  const [checked, setChecked] = useState({}); // для массовых действий
+
+  /** ===== INIT (seed + URL-параметры + localStorage) ===== */
+  useEffect(() => {
+    const saved = typeof window !== 'undefined' ? localStorage.getItem('orders') : null;
+    setOrders(saved ? JSON.parse(saved) : SEED);
+
+    const p = new URLSearchParams(window.location.search);
+    if (p.get('q')) setQuery(p.get('q') || '');
+    if (p.get('status')) setStatuses(p.get('status').split(',').filter(Boolean));
+    if (p.get('wh')) setWarehouse(p.get('wh') || 'all');
+    if (p.get('sort')) setSortBy(p.get('sor
+
